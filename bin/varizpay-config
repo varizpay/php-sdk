@@ -1,0 +1,148 @@
+#!/usr/bin/env php
+<?php
+/**
+ * VarizPay credential manager.
+ *
+ * Saves the API Key and Bank ID (bank_id) to an AES-256-CBC encrypted local
+ * file (mode 0600) using an application supplied key, so REST API backends can
+ * configure credentials once and load them securely at runtime.
+ *
+ * Usage:
+ *   varizpay-config set  --api-key=<key> --bank-id=<id> [--base-url=<url>]
+ *   varizpay-config get  [--show-secrets]
+ *   varizpay-config clear
+ *
+ * Options:
+ *   --key=<value>  Encryption key (falls back to VARIZPAY_STORAGE_KEY).
+ *   --file=<path>  Credentials file (falls back to VARIZPAY_CREDENTIALS_FILE,
+ *                  then to ./.varizpay-credentials).
+ */
+
+use VarizPay\Config\EncryptedFileStorage;
+use VarizPay\Exception\ConfigurationException;
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+$autoloadFound = false;
+foreach ($autoloaders as $candidate) {
+    if (is_file($candidate)) {
+        require $candidate;
+        $autoloadFound = true;
+        break;
+    }
+}
+if (!$autoloadFound) {
+    spl_autoload_register(function ($class) {
+        $prefix = 'VarizPay\\';
+        if (strncmp($class, $prefix, strlen($prefix)) !== 0) {
+            return;
+        }
+        $path = __DIR__ . '/../src/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+        if (is_file($path)) {
+            require $path;
+        }
+    });
+}
+
+$env      = getenv();
+$defaultFile = isset($env['VARIZPAY_CREDENTIALS_FILE']) ? $env['VARIZPAY_CREDENTIALS_FILE'] : '.varizpay-credentials';
+
+$options = [];
+$args    = [];
+foreach (array_slice($argv, 1) as $arg) {
+    if (preg_match('/^--(.+?)(?:=(.*))?$/', $arg, $m)) {
+        $options[$m[1]] = isset($m[2]) ? $m[2] : true;
+    } else {
+        $args[] = $arg;
+    }
+}
+
+function usage($exitCode = 1)
+{
+    global $argv;
+    fwrite(STDERR, <<<TXT
+VarizPay credential manager.
+
+Usage:
+  {$argv[0]} set  --api-key=<key> --bank-id=<id> [--base-url=<url>] [--file=<path>] [--key=<key>]
+  {$argv[0]} get  [--show-secrets] [--file=<path>] [--key=<key>]
+  {$argv[0]} clear [--file=<path>] [--key=<key>]
+
+Encryption key: --key option, or the VARIZPAY_STORAGE_KEY environment variable.
+File path:      --file option, or VARIZPAY_CREDENTIALS_FILE, default {$defaultFile}
+
+TXT);
+    exit($exitCode);
+}
+
+try {
+    $file = isset($options['file']) ? $options['file'] : $defaultFile;
+    $key  = isset($options['key']) ? $options['key'] : (isset($env['VARIZPAY_STORAGE_KEY']) ? $env['VARIZPAY_STORAGE_KEY'] : '');
+
+    $command = isset($args[0]) ? $args[0] : 'help';
+
+    switch ($command) {
+        case 'set':
+            if (!isset($options['api-key']) || $options['api-key'] === '') {
+                fwrite(STDERR, "Missing --api-key.\n");
+                usage();
+            }
+            if (!isset($options['bank-id']) || $options['bank-id'] === '') {
+                fwrite(STDERR, "Missing --bank-id.\n");
+                usage();
+            }
+
+            $extra = [];
+            if (isset($options['base-url']) && $options['base-url'] !== '') {
+                $extra['base_url'] = $options['base-url'];
+            }
+
+            $storage = new EncryptedFileStorage($file, $key);
+            $storage->save($options['api-key'], $options['bank-id'], $extra);
+            printf("Saved credentials to %s (mode 0600).\n", $storage->filePath());
+            break;
+
+        case 'get':
+            $storage = new EncryptedFileStorage($file, $key);
+            $stored  = $storage->load();
+
+            if ($stored === null) {
+                fwrite(STDERR, "No credentials saved yet at {$file}.\n");
+                exit(1);
+            }
+
+            $show = isset($options['show-secrets']);
+            foreach ($stored as $name => $value) {
+                if (in_array($name, ['api_key', 'bank_id'], true) && !$show) {
+                    printf("%-14s %s\n", $name . ':', str_repeat('*', strlen((string) $value)));
+                    continue;
+                }
+                printf("%-14s %s\n", $name . ':', $value);
+            }
+            break;
+
+        case 'clear':
+            $storage = new EncryptedFileStorage($file, $key);
+            $storage->clear();
+            printf("Removed %s.\n", $file);
+            break;
+
+        case 'help':
+        case '--help':
+        case '-h':
+            usage(0);
+            break;
+
+        default:
+            fwrite(STDERR, "Unknown command: {$command}\n");
+            usage();
+    }
+} catch (ConfigurationException $e) {
+    fwrite(STDERR, 'Error: ' . $e->getMessage() . "\n");
+    exit(1);
+} catch (Throwable $e) {
+    fwrite(STDERR, 'Error: ' . $e->getMessage() . "\n");
+    exit(1);
+}

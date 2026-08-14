@@ -1,0 +1,24 @@
+{
+    "name": "varizpay/php-sdk",
+    "description": "VarizPay payment gateway SDK for PHP REST API applications.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["varizpay", "payment", "gateway", "sdk", "rest", "api"],
+    "require": {
+        "php": ">=7.4",
+        "ext-json": "*",
+        "ext-openssl": "*"
+    },
+    "suggest": {
+        "ext-curl": "Used to reach the VarizPay API (falls back to stream context when unavailable)"
+    },
+    "autoload": {
+        "psr-4": {
+            "VarizPay\\": "src/"
+        }
+    },
+    "bin": ["bin/varizpay-config"],
+    "config": {
+        "sort-packages": true
+    }
+}
